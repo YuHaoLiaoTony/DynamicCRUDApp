@@ -15,6 +15,10 @@ namespace DynamicCRUDApp
     {
         private TabControl tabControl;
         private static readonly HttpClient httpClient = new HttpClient();
+
+        int width = 600;
+        int height = 800;
+
         private void Form1_Load(object sender, EventArgs e)
         {
             // 確保設定檔存在 (如果沒有，就自動產生一份 Demo 用的)
@@ -207,7 +211,7 @@ namespace DynamicCRUDApp
             using (Form editForm = new Form())
             {
                 editForm.Text = $"修改資料 - {config.Name}";
-                editForm.Size = new Size(600, 800);
+                editForm.Size = new Size(width, height);
                 editForm.StartPosition = FormStartPosition.CenterParent;
                 editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
                 editForm.MaximizeBox = false;
@@ -386,7 +390,7 @@ namespace DynamicCRUDApp
             {
                 // 1. 初始化視窗基本設定
                 editForm.Text = $"新增資料 - {config.Name}";
-                editForm.Size = new Size(400, 500);
+                editForm.Size = new Size(width, height);
                 editForm.StartPosition = FormStartPosition.CenterParent;
                 editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
                 editForm.MaximizeBox = false;
