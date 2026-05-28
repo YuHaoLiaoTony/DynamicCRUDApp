@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.9.34728.123
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DynamicCRUDApp", "DynamicCRUDApp\DynamicCRUDApp.csproj", "{F410CF54-678E-4307-8043-0A3ADEF28F78}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F410CF54-678E-4307-8043-0A3ADEF28F78}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F410CF54-678E-4307-8043-0A3ADEF28F78}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F410CF54-678E-4307-8043-0A3ADEF28F78}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F410CF54-678E-4307-8043-0A3ADEF28F78}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3DECA576-4273-4C04-911E-80C2CB45BD93}
+	EndGlobalSection
+EndGlobal

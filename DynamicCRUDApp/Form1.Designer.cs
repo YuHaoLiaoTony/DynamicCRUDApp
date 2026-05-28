@@ -1,0 +1,569 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace DynamicCRUDApp
+{
+    public partial class Form1 : Form
+    {
+        private TabControl tabControl;
+        private static readonly HttpClient httpClient = new HttpClient();
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            // 確保設定檔存在 (如果沒有，就自動產生一份 Demo 用的)
+            if (!File.Exists("AppConfig.json"))
+            {
+                CreateDummyConfig();
+            }
+
+            // 讀取並解析 JSON
+            string json = File.ReadAllText("AppConfig.json");
+            var configs = JsonSerializer.Deserialize<List<ApiConfig>>(json);
+
+            // 根據設定檔動態產生頁籤與畫面
+            foreach (var config in configs)
+            {
+                BuildTabPage(config);
+            }
+
+            tabControl.SelectedIndexChanged += (s, ev) =>
+            {
+                TriggerCurrentTabRefresh();
+            };
+
+            this.Shown += (s, ev) =>
+            {
+                TriggerCurrentTabRefresh();
+            };
+        }
+
+        private void BuildTabPage(ApiConfig config)
+        {
+            TabPage tabPage = new TabPage(config.Name);
+
+            // 使用 TableLayoutPanel 切割上方工具列與下方 Grid
+            TableLayoutPanel panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                RowCount = 2
+            };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            // 工具列 (按鈕)
+            FlowLayoutPanel toolbar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(5)
+            };
+
+            Button btnAdd = new Button { Text = "新增", Height = 30 };
+            Button btnRefresh = new Button { Text = "重新整理", Name = "btnRefresh", Height = 30 };
+
+            toolbar.Controls.Add(btnAdd);
+            toolbar.Controls.Add(btnRefresh);
+
+            // DataGridView (列表)
+            DataGridView dgv = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AllowUserToAddRows = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+
+                // ⭐ 關鍵修正 1：關閉自動產生欄位，避免 DataTable 覆蓋或重複產生
+                AutoGenerateColumns = false
+            };
+
+            // 根據 JSON 中的 Fields 設定 (只顯示 ShowInList 為 true 的)
+            foreach (var field in config.Fields.Where(f => f.ShowInList))
+            {
+                // ⭐ 關鍵修正 2：改用 DataGridViewTextBoxColumn，並明確指定對應的 DataPropertyName
+
+                var col = new DataGridViewTextBoxColumn
+                {
+                    Name = field.Key,
+                    HeaderText = field.Label,
+                    DataPropertyName = field.Key,
+                };
+
+                col.Tag = new { IsPK = field.IsPK };
+
+                dgv.Columns.Add(col);
+            }
+            // 綁定連線事件 (使用上一個步驟寫好的非同步處理)
+            btnRefresh.Click +=  async (s, e) => await ShowRefresh(config, btnRefresh, dgv);
+            
+            btnAdd.Click += (s, e) => ShowAddDialog(config, () => btnRefresh.PerformClick());
+
+            // 🎯 調整：雙擊事件改為 async，優先呼叫單筆 API
+            dgv.CellDoubleClick += ShowEditDialog(config, btnRefresh, dgv);
+
+            // 將控制項加入排版
+            panel.Controls.Add(toolbar, 0, 0);
+            panel.Controls.Add(dgv, 0, 1);
+            tabPage.Controls.Add(panel);
+
+            tabControl.TabPages.Add(tabPage);
+        }
+
+        private DataGridViewCellEventHandler ShowEditDialog(ApiConfig config, Button btnRefresh, DataGridView dgv)
+        {
+            return async (s, e) =>
+            {
+                if (e.RowIndex < 0) 
+                    return;
+                DataGridViewRow selectedRow = dgv.Rows[e.RowIndex];
+
+
+                var pkCol = selectedRow.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
+                string idValue = string.Empty;
+                
+                if (pkCol != null)
+                {
+                    idValue = selectedRow.Cells[pkCol.Name].Value?.ToString() ?? string.Empty;
+                }
+
+                // 準備一個 Dictionary 存放最終要丟給編輯視窗的資料
+                Dictionary<string, string> formData = new Dictionary<string, string>();
+
+                // 2. 判斷 Config 有沒有設定 Detail API
+                if (!config.Apis.ContainsKey("Detail"))
+                {
+                    // 3. 根本沒有設定 Detail API，直接從 DataGridViewRow 撈資料
+                    foreach (var field in config.Fields)
+                    {
+                        if (field.Key == pkCol.Name)
+                        {
+                            formData[field.Key] = idValue; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
+                        }
+                        else
+                        {
+                            formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
+                        }
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        // 組合單筆 API 網址 (例如: /users/{id} -> /users/12)
+                        string relativeUrl = config.Apis["Detail"].Url.Replace("{id}", idValue);
+                        string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{relativeUrl}";
+                        string method = config.Apis["Detail"].Method.ToUpper();
+
+                        // 發送請求
+                        var request = new HttpRequestMessage(new HttpMethod(method), apiUrl);
+                        using (var response = await httpClient.SendAsync(request))
+                        {
+                            response.EnsureSuccessStatusCode();
+
+                            string jsonResult = await response.Content.ReadAsStringAsync();
+
+                            // 解析單筆 JSON 物件並塞入 formData
+                            using (JsonDocument doc = JsonDocument.Parse(jsonResult))
+                            {
+                                foreach (var field in config.Fields)
+                                {
+                                    if (doc.RootElement.TryGetProperty(field.Key, out JsonElement prop))
+                                    {
+                                        formData[field.Key] = prop.ToString();
+
+                                    }
+                                    else if (field.Key == pkCol.Name)
+                                    {
+                                        formData[field.Key] = idValue; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"呼叫單筆 API 失敗，將自動轉用列表資料暫代。\n錯誤原因：{ex.Message}", "提示");
+                        // 備援方案：API 萬一掛了，還是從 DataGridView 撈資料頂著用
+                        foreach (var field in config.Fields)
+                        {
+                            formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
+                        }
+                    }
+                }
+
+                // 呼叫修改視窗 (改傳入處理好的 formData 與 idValue)
+                ShowEditDialog(config, idValue, formData, () => btnRefresh.PerformClick());
+            };
+        }
+
+        private void ShowEditDialog(ApiConfig config, string idValue, Dictionary<string, string> formData, Action onSuccess)
+        {
+            using (Form editForm = new Form())
+            {
+                editForm.Text = $"修改資料 - {config.Name}";
+                editForm.Size = new Size(600, 800);
+                editForm.StartPosition = FormStartPosition.CenterParent;
+                editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
+                editForm.MaximizeBox = false;
+                editForm.MinimizeBox = false;
+
+                FlowLayoutPanel flowPanel = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    FlowDirection = FlowDirection.TopDown,
+                    Padding = new Padding(20),
+                    AutoScroll = true
+                };
+
+                Dictionary<string, Control> inputControls = new Dictionary<string, Control>();
+
+                // 1. 動態產生控制項
+                foreach (var field in config.Fields)
+                {
+                    // 🌟 改從傳進來的 formData 字典檔抓數值
+                    string currentValue = formData.ContainsKey(field.Key) ? formData[field.Key] : "";
+
+                    Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
+                    flowPanel.Controls.Add(lbl);
+
+                    Control inputCtrl;
+                    if (field.UiType == "Select" && field.Options != null)
+                    {
+                        var cmb = new ComboBox { Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
+                        cmb.Items.AddRange(field.Options.ToArray());
+                        inputCtrl = cmb;
+                    }
+                    else if (field.UiType == "CheckBox")
+                    {
+                        inputCtrl = new CheckBox { Text = field.Label, Width = 340 };
+                    }
+                    else
+                    {
+                        inputCtrl = new TextBox { Width = 340 };
+                    }
+
+                    // 主鍵或不可編輯的欄位鎖死唯讀
+                    if (field.IsPK || field.Editable == false)
+                    {
+                        inputCtrl.Enabled = false;
+                    }
+                    inputCtrl.Text = currentValue;
+                    flowPanel.Controls.Add(inputCtrl);
+                    inputControls.Add(field.Key, inputCtrl);
+                }
+
+                Button btnSave = new Button { Text = "儲存修改", Width = 100, Height = 35, Margin = new Padding(0, 25, 0, 0) };
+                flowPanel.Controls.Add(btnSave);
+
+                // 2. 儲存點擊事件
+                btnSave.Click += async (ss, ee) =>
+                {
+                    btnSave.Enabled = false;
+
+                    var payload = new Dictionary<string, object>();
+                    foreach (var kvp in inputControls)
+                    {
+                        var field = config.Fields.FirstOrDefault(f => f.Key == kvp.Key);
+                        if (field == null) continue;
+
+                        // 先拿到 UI 上的原始文字
+                        string rawValue = "";
+                        if (kvp.Value is ComboBox cmb) rawValue = cmb.SelectedItem?.ToString() ?? "";
+                        else if (kvp.Value is TextBox txt) rawValue = txt.Text;
+
+                        // 🎯 依據資料型態 (Type) 進行精準轉型
+                        switch (field.Type.ToLower())
+                        {
+                            case "number":
+                                if (int.TryParse(rawValue, out int intVal)) payload.Add(kvp.Key, intVal);
+                                else payload.Add(kvp.Key, 0); // 防呆
+                                break;
+
+                            case "object": // 處理巢狀 JSON
+                                try
+                                {
+                                    using (var doc = JsonDocument.Parse(rawValue))
+                                    {
+                                        payload.Add(kvp.Key, doc.RootElement.Clone());
+                                    }
+                                }
+                                catch
+                                {
+                                    payload.Add(kvp.Key, new Dictionary<string, string>()); // 格式錯給空物件
+                                }
+                                break;
+
+                            case "boolean":
+                                // 如果以後有布林值欄位也可以直接支援
+                                payload.Add(kvp.Key, rawValue.ToLower() == "true");
+                                break;
+
+                            default: // "string" 或沒設定，一律當作一般字串
+                                payload.Add(kvp.Key, rawValue);
+                                break;
+                        }
+                    }
+
+                    try
+                    {
+                        if (!config.Apis.ContainsKey("Update"))
+                            throw new Exception("Config 中未設定 Update API 網址！");
+
+                        var apiInfo = config.Apis["Update"];
+                        // 🔄 直接替換先前傳進來的 idValue
+                        string relativeUrl = apiInfo.Url.Replace("{id}", idValue);
+                        string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{relativeUrl}";
+
+                        string jsonBody = JsonSerializer.Serialize(payload);
+                        var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+
+                        var request = new HttpRequestMessage(new HttpMethod(apiInfo.Method.ToUpper()), apiUrl) { Content = content };
+                        var response = await httpClient.SendAsync(request);
+                        response.EnsureSuccessStatusCode();
+
+                        MessageBox.Show("修改成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        editForm.DialogResult = DialogResult.OK;
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"修改失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        btnSave.Enabled = true;
+                    }
+                };
+
+                editForm.Controls.Add(flowPanel);
+
+                if (editForm.ShowDialog() == DialogResult.OK)
+                {
+                    onSuccess?.Invoke();
+                }
+            }
+        }
+  
+        private async Task ShowRefresh(ApiConfig config, Button btnRefresh, DataGridView dgv)
+        {
+            btnRefresh.Enabled = false;
+            string originalText = btnRefresh.Text;
+            btnRefresh.Text = "讀取中...";
+
+            try
+            {
+                string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{config.Apis["List"].Url}";
+                string method = config.Apis["List"].Method.ToUpper();
+
+                var request = new HttpRequestMessage(new HttpMethod(method), apiUrl);
+                using (var response = await httpClient.SendAsync(request))
+                {
+                    response.EnsureSuccessStatusCode();
+
+                    string jsonResult = await response.Content.ReadAsStringAsync();
+                    DataTable dt = ConvertJsonToDataTable(jsonResult, config.Fields);
+
+                    // 這裡綁定時，就會乖乖對應到上面設定的 DataPropertyName 了
+                    dgv.DataSource = dt;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"呼叫 API 發生錯誤：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnRefresh.Text = originalText;
+                btnRefresh.Enabled = true;
+            }
+        }
+
+        private void ShowAddDialog(ApiConfig config, Action onSuccess)
+        {
+            using (Form editForm = new Form())
+            {
+                // 1. 初始化視窗基本設定
+                editForm.Text = $"新增資料 - {config.Name}";
+                editForm.Size = new Size(400, 500);
+                editForm.StartPosition = FormStartPosition.CenterParent;
+                editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
+                editForm.MaximizeBox = false;
+                editForm.MinimizeBox = false;
+
+                FlowLayoutPanel flowPanel = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    FlowDirection = FlowDirection.TopDown,
+                    Padding = new Padding(20),
+                    AutoScroll = true
+                };
+
+                Dictionary<string, Control> inputControls = new Dictionary<string, Control>();
+
+                // 2. 動態產生控制項
+                foreach (var field in config.Fields)
+                {
+                    if (field.Key.ToLower() == "id" || field.Key.ToLower() == "index" || field.Editable == false)
+                        continue;
+
+                    Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
+                    flowPanel.Controls.Add(lbl);
+
+                    Control inputCtrl;
+                    if (field.UiType == "Select" && field.Options != null)
+                    {
+                        var cmb = new ComboBox { Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
+                        cmb.Items.AddRange(field.Options.ToArray());
+                        inputCtrl = cmb;
+                    }
+                    else if (field.UiType == "CheckBox")
+                    {
+                        inputCtrl = new CheckBox { Text = field.Label, Width = 340 };
+                    }
+                    else
+                    {
+                        inputCtrl = new TextBox { Width = 340 };
+                    }
+                    
+                    flowPanel.Controls.Add(inputCtrl);
+                    inputControls.Add(field.Key, inputCtrl);
+                }
+
+                // 3. 儲存按鈕
+                Button btnSave = new Button { Text = "儲存提交", Width = 100, Height = 35, Margin = new Padding(0, 25, 0, 0) };
+                flowPanel.Controls.Add(btnSave);
+
+                // 4. 儲存按鈕點擊事件 (非同步)
+                btnSave.Click += async (ss, ee) =>
+                {
+                    btnSave.Enabled = false;
+
+                    var payload = new Dictionary<string, object>();
+                    foreach (var kvp in inputControls)
+                    {
+                        if (kvp.Value is ComboBox cmb)
+                            payload.Add(kvp.Key, cmb.SelectedItem?.ToString() ?? "");
+                        else if (kvp.Value is TextBox txt)
+                            payload.Add(kvp.Key, txt.Text);
+                    }
+
+                    try
+                    {
+                        if (!config.Apis.ContainsKey("Create"))
+                            throw new Exception("Config 中未設定 Create API 網址！");
+
+                        string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{config.Apis["Create"].Url}";
+                        string jsonBody = JsonSerializer.Serialize(payload);
+                        var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+
+                        var response = await httpClient.PostAsync(apiUrl, content);
+                        response.EnsureSuccessStatusCode();
+
+                        MessageBox.Show("新增成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        editForm.DialogResult = DialogResult.OK;
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"新增失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        btnSave.Enabled = true;
+                    }
+                };
+
+                editForm.Controls.Add(flowPanel);
+
+                // 5. 彈出視窗並處理成功回呼
+                if (editForm.ShowDialog() == DialogResult.OK)
+                {
+                    onSuccess?.Invoke(); // 觸發傳進來的重新整理動作
+                }
+            }
+        }
+        private DataTable ConvertJsonToDataTable(string json, List<FieldInfo> fields)
+        {
+            DataTable dt = new DataTable();
+
+            // 根據 Config 的 Fields 定義 DataTable 的欄位
+            foreach (var field in fields)
+            {
+                dt.Columns.Add(field.Key, typeof(string)); // 簡單起見，欄位先全以 string 處理
+            }
+
+            // 解析 JSON
+            using (JsonDocument doc = JsonDocument.Parse(json))
+            {
+                // 確保回傳根節點是陣列 (例如: [ {}, {}, {} ])
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement element in doc.RootElement.EnumerateArray())
+                    {
+                        DataRow row = dt.NewRow();
+
+                        // 依據 Config 設定的 Key 去對應 JSON 內容
+                        foreach (var field in fields)
+                        {
+                            if (element.TryGetProperty(field.Key, out JsonElement prop))
+                            {
+                                row[field.Key] = prop.ToString();
+                            }
+                            else
+                            {
+                                row[field.Key] = DBNull.Value; // API 沒回傳該欄位時填空
+                            }
+                        }
+                        dt.Rows.Add(row);
+                    }
+                }
+            }
+
+            return dt;
+        }
+        private void CreateDummyConfig()
+        {
+            // 產生一份測試用的 JSON 設定檔
+            var dummyJson = @"[
+              {
+                ""Id"": ""mock_api_01"",
+                ""Name"": ""使用者管理"",
+                ""BaseUrl"": ""https://api.example.com/v1"",
+                ""Apis"": {
+                  ""List"": { ""Url"": ""/users"", ""Method"": ""GET"" },
+                  ""Create"": { ""Url"": ""/users"", ""Method"": ""POST"" }
+                },
+                ""Fields"": [
+                  { ""Key"": ""id"", ""Label"": ""流水號"", ""Type"": ""String"", ""ShowInList"": true },
+                  { ""Key"": ""username"", ""Label"": ""帳號"", ""Type"": ""String"", ""ShowInList"": true },
+                  { ""Key"": ""role"", ""Label"": ""角色"", ""Type"": ""Select"", ""ShowInList"": true }
+                ]
+              },
+              {
+                ""Id"": ""mock_api_02"",
+                ""Name"": ""商品維護"",
+                ""BaseUrl"": ""https://api.example.com/v1"",
+                ""Apis"": {
+                  ""List"": { ""Url"": ""/products"", ""Method"": ""GET"" }
+                },
+                ""Fields"": [
+                  { ""Key"": ""prodId"", ""Label"": ""商品編號"", ""Type"": ""String"", ""ShowInList"": true },
+                  { ""Key"": ""price"", ""Label"": ""價格"", ""Type"": ""Number"", ""ShowInList"": true }
+                ]
+              }
+            ]";
+            File.WriteAllText("AppConfig.json", dummyJson);
+        }
+
+        private void TriggerCurrentTabRefresh()
+        {
+            // 如果連一個頁籤都沒有，就不處理
+            if (tabControl.SelectedTab == null) return;
+
+            // 🔍 核心妙招：從「當前顯示的頁籤」裡面，往下挖出名叫 "btnRefresh" 的那顆按鈕
+            var btn = tabControl.SelectedTab.Controls.Find("btnRefresh", true).FirstOrDefault() as Button;
+
+            // 只要找到了，而且這時候頁面已經看得到了（Visible），PerformClick 就能100%安全執行！
+            btn?.PerformClick();
+        }
+    }
+}
+
