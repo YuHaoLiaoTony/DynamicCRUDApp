@@ -143,43 +143,24 @@ namespace DynamicCRUDApp
 
                 // 準備一個 Dictionary 存放最終要丟給編輯視窗的資料
                 Dictionary<string, string> formData = new Dictionary<string, string>();
-
+                formData[pk.Name] = pk.Value;
                 // 2. 判斷 Config 有沒有設定 Detail API
                 if (!config.Apis.ContainsKey("Detail"))
                 {
                     // 3. 根本沒有設定 Detail API，直接從 DataGridViewRow 撈資料
                     foreach (var field in config.Fields)
                     {
-                        if (field.Key == pk.Name)
-                        {
-                            formData[field.Key] = pk.Value; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
-                        }
-                        else
-                        {
-                            formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
-                        }
+                        formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
                     }
                 }
                 else
                 {
                     try
                     {
-                        string jsonResult = await SendApi(config, "Detail", pk);
-                        
-                        // 解析單筆 JSON 物件並塞入 formData
-                        using (JsonDocument doc = JsonDocument.Parse(jsonResult))
+                        var apiData = await SendApiAsDictAsync(config, "Detail", pk);
+                        foreach (var kv in apiData)
                         {
-                            foreach (var field in config.Fields)
-                            {
-                                if (doc.RootElement.TryGetProperty(field.Key, out JsonElement prop))
-                                {
-                                    formData[field.Key] = prop.ToString();
-                                }
-                                else if (field.Key == pk.Name)
-                                {
-                                    formData[field.Key] = pk.Value; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
-                                }
-                            }
+                            formData[kv.Key] = kv.Value;
                         }
                     }
                     catch (Exception ex)
@@ -312,7 +293,7 @@ namespace DynamicCRUDApp
                             throw new Exception("Config 中未設定 Update API 網址！");
 
                         string jsonBody = JsonSerializer.Serialize(payload);
-                        await SendApi(config, "Update", pk, jsonBody);
+                        await SendApiStringAsync(config, "Update", pk, jsonBody);
 
                         MessageBox.Show("修改成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         editForm.DialogResult = DialogResult.OK;
@@ -341,7 +322,7 @@ namespace DynamicCRUDApp
 
             try
             {
-                string responseStr = await SendApi(config, "List");
+                string responseStr = await SendApiStringAsync(config, "List");
                 DataTable dt = ConvertJsonToDataTable(responseStr, config.Fields);
                 dgv.DataSource = dt;
             }
@@ -431,7 +412,7 @@ namespace DynamicCRUDApp
                             throw new Exception("Config 中未設定 Create API 網址！");
 
                         string jsonBody = JsonSerializer.Serialize(payload);
-                        await SendApi(config, "Create", jsonBody: jsonBody);
+                        await SendApiStringAsync(config, "Create", jsonBody: jsonBody);
                    
                         MessageBox.Show("新增成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         editForm.DialogResult = DialogResult.OK;
@@ -537,7 +518,26 @@ namespace DynamicCRUDApp
             btn?.PerformClick();
         }
 
-        private async Task<string> SendApi(ApiConfig config, string action, PKInfo pk = null, string jsonBody = null)
+        public async Task<Dictionary<string, string>> SendApiAsDictAsync(ApiConfig config, string action, PKInfo pk = null, string jsonBody = null)
+        {
+            string jsonResult = await SendApiStringAsync(config, action, pk, jsonBody);
+
+            Dictionary<string, string> formData = new Dictionary<string, string>();
+            // 解析單筆 JSON 物件並塞入 formData
+            using (JsonDocument doc = JsonDocument.Parse(jsonResult))
+            {
+                foreach (var field in config.Fields)
+                {
+                    if (doc.RootElement.TryGetProperty(field.Key, out JsonElement prop))
+                    {
+                        formData[field.Key] = prop.ToString();
+                    }
+                }
+            }
+
+            return formData;
+        }
+        private async Task<string> SendApiStringAsync(ApiConfig config, string action, PKInfo pk = null, string jsonBody = null)
         {
             var apiConfig = config.Apis.ContainsKey(action) ? config.Apis[action] : null;
             string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{apiConfig.Url}";
