@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -21,6 +22,7 @@ namespace DynamicCRUDApp
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            //InitializeComponent();
             // 確保設定檔存在 (如果沒有，就自動產生一份 Demo 用的)
             if (!File.Exists("AppConfig.json"))
             {
@@ -127,13 +129,16 @@ namespace DynamicCRUDApp
                     return;
                 DataGridViewRow selectedRow = dgv.Rows[e.RowIndex];
 
+                DataGridViewColumn pkCol = selectedRow.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
 
-                var pkCol = selectedRow.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
-                string idValue = string.Empty;
-                
-                if (pkCol != null)
+                PKInfo pk = null;
+                if(pkCol != null)
                 {
-                    idValue = selectedRow.Cells[pkCol.Name].Value?.ToString() ?? string.Empty;
+                    pk = new PKInfo
+                    {
+                        Name = pkCol.Name,
+                        Value = selectedRow.Cells[pkCol.Name].Value?.ToString() ?? string.Empty
+                    };
                 }
 
                 // 準備一個 Dictionary 存放最終要丟給編輯視窗的資料
@@ -145,9 +150,9 @@ namespace DynamicCRUDApp
                     // 3. 根本沒有設定 Detail API，直接從 DataGridViewRow 撈資料
                     foreach (var field in config.Fields)
                     {
-                        if (field.Key == pkCol.Name)
+                        if (field.Key == pk.Name)
                         {
-                            formData[field.Key] = idValue; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
+                            formData[field.Key] = pk.Value; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
                         }
                         else
                         {
@@ -159,33 +164,20 @@ namespace DynamicCRUDApp
                 {
                     try
                     {
-                        // 組合單筆 API 網址 (例如: /users/{id} -> /users/12)
-                        string relativeUrl = config.Apis["Detail"].Url.Replace("{id}", idValue);
-                        string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{relativeUrl}";
-                        string method = config.Apis["Detail"].Method.ToUpper();
-
-                        // 發送請求
-                        var request = new HttpRequestMessage(new HttpMethod(method), apiUrl);
-                        using (var response = await httpClient.SendAsync(request))
+                        string jsonResult = await SendApi(config, "Detail", pk);
+                        
+                        // 解析單筆 JSON 物件並塞入 formData
+                        using (JsonDocument doc = JsonDocument.Parse(jsonResult))
                         {
-                            response.EnsureSuccessStatusCode();
-
-                            string jsonResult = await response.Content.ReadAsStringAsync();
-
-                            // 解析單筆 JSON 物件並塞入 formData
-                            using (JsonDocument doc = JsonDocument.Parse(jsonResult))
+                            foreach (var field in config.Fields)
                             {
-                                foreach (var field in config.Fields)
+                                if (doc.RootElement.TryGetProperty(field.Key, out JsonElement prop))
                                 {
-                                    if (doc.RootElement.TryGetProperty(field.Key, out JsonElement prop))
-                                    {
-                                        formData[field.Key] = prop.ToString();
-
-                                    }
-                                    else if (field.Key == pkCol.Name)
-                                    {
-                                        formData[field.Key] = idValue; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
-                                    }
+                                    formData[field.Key] = prop.ToString();
+                                }
+                                else if (field.Key == pk.Name)
+                                {
+                                    formData[field.Key] = pk.Value; // 直接用剛剛找到的 PK 值，確保 ID 是正確的
                                 }
                             }
                         }
@@ -202,11 +194,11 @@ namespace DynamicCRUDApp
                 }
 
                 // 呼叫修改視窗 (改傳入處理好的 formData 與 idValue)
-                ShowEditDialog(config, idValue, formData, () => btnRefresh.PerformClick());
+                ShowEditDialog(config, pk, formData, () => btnRefresh.PerformClick());
             };
         }
 
-        private void ShowEditDialog(ApiConfig config, string idValue, Dictionary<string, string> formData, Action onSuccess)
+        private void ShowEditDialog(ApiConfig config, PKInfo pk, Dictionary<string, string> formData, Action onSuccess)
         {
             using (Form editForm = new Form())
             {
@@ -319,17 +311,8 @@ namespace DynamicCRUDApp
                         if (!config.Apis.ContainsKey("Update"))
                             throw new Exception("Config 中未設定 Update API 網址！");
 
-                        var apiInfo = config.Apis["Update"];
-                        // 🔄 直接替換先前傳進來的 idValue
-                        string relativeUrl = apiInfo.Url.Replace("{id}", idValue);
-                        string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{relativeUrl}";
-
                         string jsonBody = JsonSerializer.Serialize(payload);
-                        var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
-
-                        var request = new HttpRequestMessage(new HttpMethod(apiInfo.Method.ToUpper()), apiUrl) { Content = content };
-                        var response = await httpClient.SendAsync(request);
-                        response.EnsureSuccessStatusCode();
+                        await SendApi(config, "Update", pk, jsonBody);
 
                         MessageBox.Show("修改成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         editForm.DialogResult = DialogResult.OK;
@@ -358,20 +341,9 @@ namespace DynamicCRUDApp
 
             try
             {
-                string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{config.Apis["List"].Url}";
-                string method = config.Apis["List"].Method.ToUpper();
-
-                var request = new HttpRequestMessage(new HttpMethod(method), apiUrl);
-                using (var response = await httpClient.SendAsync(request))
-                {
-                    response.EnsureSuccessStatusCode();
-
-                    string jsonResult = await response.Content.ReadAsStringAsync();
-                    DataTable dt = ConvertJsonToDataTable(jsonResult, config.Fields);
-
-                    // 這裡綁定時，就會乖乖對應到上面設定的 DataPropertyName 了
-                    dgv.DataSource = dt;
-                }
+                string responseStr = await SendApi(config, "List");
+                DataTable dt = ConvertJsonToDataTable(responseStr, config.Fields);
+                dgv.DataSource = dt;
             }
             catch (Exception ex)
             {
@@ -409,7 +381,7 @@ namespace DynamicCRUDApp
                 // 2. 動態產生控制項
                 foreach (var field in config.Fields)
                 {
-                    if (field.Key.ToLower() == "id" || field.Key.ToLower() == "index" || field.Editable == false)
+                    if (field.IsPK || field.Editable == false)
                         continue;
 
                     Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
@@ -458,13 +430,9 @@ namespace DynamicCRUDApp
                         if (!config.Apis.ContainsKey("Create"))
                             throw new Exception("Config 中未設定 Create API 網址！");
 
-                        string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{config.Apis["Create"].Url}";
                         string jsonBody = JsonSerializer.Serialize(payload);
-                        var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
-
-                        var response = await httpClient.PostAsync(apiUrl, content);
-                        response.EnsureSuccessStatusCode();
-
+                        await SendApi(config, "Create", jsonBody: jsonBody);
+                   
                         MessageBox.Show("新增成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         editForm.DialogResult = DialogResult.OK;
                     }
@@ -567,6 +535,49 @@ namespace DynamicCRUDApp
 
             // 只要找到了，而且這時候頁面已經看得到了（Visible），PerformClick 就能100%安全執行！
             btn?.PerformClick();
+        }
+
+        private async Task<string> SendApi(ApiConfig config, string action, PKInfo pk = null, string jsonBody = null)
+        {
+            var apiConfig = config.Apis.ContainsKey(action) ? config.Apis[action] : null;
+            string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{apiConfig.Url}";
+            if(pk != null)
+            {
+                apiUrl = apiUrl.Replace($"{{{pk.Name}}}", pk.Value.ToString());
+            }
+            string method = apiConfig.Method.ToUpper();
+
+            var request = new HttpRequestMessage(new HttpMethod(method), apiUrl);
+
+            if (jsonBody != null)
+            {
+                var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+                request.Content = content;
+            }
+
+            if (config.Headers != null)
+            {
+                foreach (var item in config.Headers)
+                {
+                    request.Headers.Add(item.Key, item.Value);
+                }
+            }
+
+            if (apiConfig.Headers != null)
+            {
+                foreach (var item in apiConfig.Headers)
+                {
+                    request.Headers.Add(item.Key, item.Value);
+                }
+            }
+
+            using (var response = await httpClient.SendAsync(request))
+            {
+                response.EnsureSuccessStatusCode();
+
+                string jsonResult = await response.Content.ReadAsStringAsync();
+                return jsonResult;
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using System;
+﻿using DynamicCRUDApp.Properties;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -25,6 +26,8 @@ namespace DynamicCRUDApp
             this.Controls.Add(tabControl);
 
             this.Load += Form1_Load;
+            ComponentResourceManager resources = new ComponentResourceManager(typeof(Form1));
+            this.Icon = ((Icon)(resources.GetObject("$this.Icon")));
         }
 
         private void Form1_Load_1(object sender, EventArgs e)

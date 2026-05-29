@@ -8,13 +8,12 @@ using System.Windows.Forms;
 
 namespace DynamicCRUDApp
 {
-    // --- 以下為對應 JSON 的 Model 結構 ---
-
     public class ApiConfig
     {
         public string Id { get; set; }
         public string Name { get; set; }
         public string BaseUrl { get; set; }
+        public Dictionary<string,string> Headers { get; set; } = new Dictionary<string, string>();
         public Dictionary<string, ApiInfo> Apis { get; set; } = new Dictionary<string, ApiInfo>();
         public List<FieldInfo> Fields { get; set; } = new List<FieldInfo>();
     }
@@ -23,6 +22,8 @@ namespace DynamicCRUDApp
     {
         public string Url { get; set; }
         public string Method { get; set; }
+
+        public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>();
     }
 
     public class FieldInfo
