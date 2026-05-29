@@ -120,7 +120,20 @@ namespace DynamicCRUDApp
 
             tabControl.TabPages.Add(tabPage);
         }
+        private PKInfo GetPKInfoFromRow(DataGridViewRow row)
+        {
+            DataGridViewColumn pkCol = row.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
 
+            if (pkCol != null)
+            {
+                return new PKInfo
+                {
+                    Name = pkCol.Name,
+                    Value = row.Cells[pkCol.Name].Value?.ToString() ?? string.Empty
+                };
+            }
+            return null;
+        }
         private DataGridViewCellEventHandler ShowEditDialog(ApiConfig config, Button btnRefresh, DataGridView dgv)
         {
             return async (s, e) =>
@@ -157,7 +170,7 @@ namespace DynamicCRUDApp
                 {
                     try
                     {
-                        var apiData = await SendApiAsDictAsync(config, "Detail", pk);
+                        var apiData = await SendApiAsDictAsync(config, "Detail", selectedRow);
                         foreach (var kv in apiData)
                         {
                             formData[kv.Key] = kv.Value;
@@ -175,11 +188,11 @@ namespace DynamicCRUDApp
                 }
 
                 // 呼叫修改視窗 (改傳入處理好的 formData 與 idValue)
-                ShowEditDialog(config, pk, formData, () => btnRefresh.PerformClick());
+                ShowEditDialog(config, selectedRow, formData, () => btnRefresh.PerformClick());
             };
         }
 
-        private void ShowEditDialog(ApiConfig config, PKInfo pk, Dictionary<string, string> formData, Action onSuccess)
+        private void ShowEditDialog(ApiConfig config, DataGridViewRow selectedRow, Dictionary<string, string> formData, Action onSuccess)
         {
             using (Form editForm = new Form())
             {
@@ -235,76 +248,18 @@ namespace DynamicCRUDApp
                     inputControls.Add(field.Key, inputCtrl);
                 }
 
-                Button btnSave = new Button { Text = "儲存修改", Width = 100, Height = 35, Margin = new Padding(0, 25, 0, 0) };
-                flowPanel.Controls.Add(btnSave);
 
-                // 2. 儲存點擊事件
-                btnSave.Click += async (ss, ee) =>
+                Button btnDelete = GetDeleteBtn(config, selectedRow, editForm, inputControls);
+                Button btnSave = GetSaveBtn(config, selectedRow, editForm, inputControls);
+                Panel buttonContainer = new Panel
                 {
-                    btnSave.Enabled = false;
-
-                    var payload = new Dictionary<string, object>();
-                    foreach (var kvp in inputControls)
-                    {
-                        var field = config.Fields.FirstOrDefault(f => f.Key == kvp.Key);
-                        if (field == null) continue;
-
-                        // 先拿到 UI 上的原始文字
-                        string rawValue = "";
-                        if (kvp.Value is ComboBox cmb) rawValue = cmb.SelectedItem?.ToString() ?? "";
-                        else if (kvp.Value is TextBox txt) rawValue = txt.Text;
-
-                        // 🎯 依據資料型態 (Type) 進行精準轉型
-                        switch (field.Type.ToLower())
-                        {
-                            case "number":
-                                if (int.TryParse(rawValue, out int intVal)) payload.Add(kvp.Key, intVal);
-                                else payload.Add(kvp.Key, 0); // 防呆
-                                break;
-
-                            case "object": // 處理巢狀 JSON
-                                try
-                                {
-                                    using (var doc = JsonDocument.Parse(rawValue))
-                                    {
-                                        payload.Add(kvp.Key, doc.RootElement.Clone());
-                                    }
-                                }
-                                catch
-                                {
-                                    payload.Add(kvp.Key, new Dictionary<string, string>()); // 格式錯給空物件
-                                }
-                                break;
-
-                            case "boolean":
-                                // 如果以後有布林值欄位也可以直接支援
-                                payload.Add(kvp.Key, rawValue.ToLower() == "true");
-                                break;
-
-                            default: // "string" 或沒設定，一律當作一般字串
-                                payload.Add(kvp.Key, rawValue);
-                                break;
-                        }
-                    }
-
-                    try
-                    {
-                        if (!config.Apis.ContainsKey("Update"))
-                            throw new Exception("Config 中未設定 Update API 網址！");
-
-                        string jsonBody = JsonSerializer.Serialize(payload);
-                        await SendApiStringAsync(config, "Update", pk, jsonBody);
-
-                        MessageBox.Show("修改成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        editForm.DialogResult = DialogResult.OK;
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"修改失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        btnSave.Enabled = true;
-                    }
+                    Width = flowPanel.ClientSize.Width - 10, // 減去一點邊距防置折行
+                    Height = 45
                 };
-
+                buttonContainer.Controls.Add(btnSave);
+                buttonContainer.Controls.Add(btnDelete);
+                flowPanel.Controls.Add(buttonContainer);
+              
                 editForm.Controls.Add(flowPanel);
 
                 if (editForm.ShowDialog() == DialogResult.OK)
@@ -313,7 +268,103 @@ namespace DynamicCRUDApp
                 }
             }
         }
-  
+        private Button GetDeleteBtn(ApiConfig config, DataGridViewRow selectedRow, Form editForm, Dictionary<string, Control> inputControls)
+        {
+            Button btnDelete = new Button { Text = "刪除", Width = 100, Height = 35, Dock = DockStyle.Right };
+            btnDelete.Click += async (ss, ee) =>
+            {
+                btnDelete.Enabled = false;
+
+                try
+                {
+                    if (!config.Apis.ContainsKey("Delete"))
+                        throw new Exception("Config 中未設定 Delete API 網址！");
+
+                    await SendApiStringAsync(config, "Delete", selectedRow);
+
+                    MessageBox.Show("刪除成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    editForm.DialogResult = DialogResult.OK;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"刪除失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    btnDelete.Enabled = true;
+                }
+            };
+            return btnDelete;
+        }
+        private Button GetSaveBtn(ApiConfig config, DataGridViewRow selectedRow, Form editForm, Dictionary<string, Control> inputControls)
+        {
+            Button btnSave = new Button { Text = "儲存修改", Width = 100, Height = 35, Dock = DockStyle.Left };
+            // 2. 儲存點擊事件
+            btnSave.Click += async (ss, ee) =>
+            {
+                btnSave.Enabled = false;
+
+                var payload = new Dictionary<string, object>();
+                foreach (var kvp in inputControls)
+                {
+                    var field = config.Fields.FirstOrDefault(f => f.Key == kvp.Key);
+                    if (field == null) continue;
+
+                    // 先拿到 UI 上的原始文字
+                    string rawValue = "";
+                    if (kvp.Value is ComboBox cmb) rawValue = cmb.SelectedItem?.ToString() ?? "";
+                    else if (kvp.Value is TextBox txt) rawValue = txt.Text;
+
+                    // 🎯 依據資料型態 (Type) 進行精準轉型
+                    switch (field.Type.ToLower())
+                    {
+                        case "number":
+                            if (int.TryParse(rawValue, out int intVal)) payload.Add(kvp.Key, intVal);
+                            else payload.Add(kvp.Key, 0); // 防呆
+                            break;
+
+                        case "object": // 處理巢狀 JSON
+                            try
+                            {
+                                using (var doc = JsonDocument.Parse(rawValue))
+                                {
+                                    payload.Add(kvp.Key, doc.RootElement.Clone());
+                                }
+                            }
+                            catch
+                            {
+                                payload.Add(kvp.Key, new Dictionary<string, string>()); // 格式錯給空物件
+                            }
+                            break;
+
+                        case "boolean":
+                            // 如果以後有布林值欄位也可以直接支援
+                            payload.Add(kvp.Key, rawValue.ToLower() == "true");
+                            break;
+
+                        default: // "string" 或沒設定，一律當作一般字串
+                            payload.Add(kvp.Key, rawValue);
+                            break;
+                    }
+                }
+
+                try
+                {
+                    if (!config.Apis.ContainsKey("Update"))
+                        throw new Exception("Config 中未設定 Update API 網址！");
+
+                    string jsonBody = JsonSerializer.Serialize(payload);
+                    await SendApiStringAsync(config, "Update", selectedRow, jsonBody);
+
+                    MessageBox.Show("修改成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    editForm.DialogResult = DialogResult.OK;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"修改失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    btnSave.Enabled = true;
+                }
+            };
+            return btnSave;
+        }
+
         private async Task ShowRefresh(ApiConfig config, Button btnRefresh, DataGridView dgv)
         {
             btnRefresh.Enabled = false;
@@ -518,9 +569,9 @@ namespace DynamicCRUDApp
             btn?.PerformClick();
         }
 
-        public async Task<Dictionary<string, string>> SendApiAsDictAsync(ApiConfig config, string action, PKInfo pk = null, string jsonBody = null)
+        public async Task<Dictionary<string, string>> SendApiAsDictAsync(ApiConfig config, string action, DataGridViewRow selectedRow = null, string jsonBody = null)
         {
-            string jsonResult = await SendApiStringAsync(config, action, pk, jsonBody);
+            string jsonResult = await SendApiStringAsync(config, action, selectedRow, jsonBody);
 
             Dictionary<string, string> formData = new Dictionary<string, string>();
             // 解析單筆 JSON 物件並塞入 formData
@@ -537,14 +588,19 @@ namespace DynamicCRUDApp
 
             return formData;
         }
-        private async Task<string> SendApiStringAsync(ApiConfig config, string action, PKInfo pk = null, string jsonBody = null)
+        private async Task<string> SendApiStringAsync(ApiConfig config, string action, DataGridViewRow selectedRow = null, string jsonBody = null)
         {
             var apiConfig = config.Apis.ContainsKey(action) ? config.Apis[action] : null;
             string apiUrl = $"{config.BaseUrl.TrimEnd('/')}{apiConfig.Url}";
-            if(pk != null)
+
+            if(selectedRow != null)
             {
-                apiUrl = apiUrl.Replace($"{{{pk.Name}}}", pk.Value.ToString());
+                foreach (var item in selectedRow.DataGridView.Columns.Cast<DataGridViewColumn>())
+                {
+                    apiUrl = apiUrl.Replace($"{{{item.Name}}}", selectedRow.Cells[item.Name].Value?.ToString() ?? string.Empty);
+                }
             }
+
             string method = apiConfig.Method.ToUpper();
 
             var request = new HttpRequestMessage(new HttpMethod(method), apiUrl);
