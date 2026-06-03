@@ -300,50 +300,7 @@ namespace DynamicCRUDApp
             btnSave.Click += async (ss, ee) =>
             {
                 btnSave.Enabled = false;
-
-                var payload = new Dictionary<string, object>();
-                foreach (var kvp in inputControls)
-                {
-                    var field = config.Fields.FirstOrDefault(f => f.Key == kvp.Key);
-                    if (field == null) continue;
-
-                    // 先拿到 UI 上的原始文字
-                    string rawValue = "";
-                    if (kvp.Value is ComboBox cmb) rawValue = cmb.SelectedItem?.ToString() ?? "";
-                    else if (kvp.Value is TextBox txt) rawValue = txt.Text;
-
-                    // 🎯 依據資料型態 (Type) 進行精準轉型
-                    switch (field.Type.ToLower())
-                    {
-                        case "number":
-                            if (int.TryParse(rawValue, out int intVal)) payload.Add(kvp.Key, intVal);
-                            else payload.Add(kvp.Key, 0); // 防呆
-                            break;
-
-                        case "object": // 處理巢狀 JSON
-                            try
-                            {
-                                using (var doc = JsonDocument.Parse(rawValue))
-                                {
-                                    payload.Add(kvp.Key, doc.RootElement.Clone());
-                                }
-                            }
-                            catch
-                            {
-                                payload.Add(kvp.Key, new Dictionary<string, string>()); // 格式錯給空物件
-                            }
-                            break;
-
-                        case "boolean":
-                            // 如果以後有布林值欄位也可以直接支援
-                            payload.Add(kvp.Key, rawValue.ToLower() == "true");
-                            break;
-
-                        default: // "string" 或沒設定，一律當作一般字串
-                            payload.Add(kvp.Key, rawValue);
-                            break;
-                    }
-                }
+                Dictionary<string, object> payload = GetPayload(config, inputControls);
 
                 try
                 {
@@ -363,6 +320,55 @@ namespace DynamicCRUDApp
                 }
             };
             return btnSave;
+        }
+
+        private static Dictionary<string, object> GetPayload(ApiConfig config, Dictionary<string, Control> inputControls)
+        {
+            var payload = new Dictionary<string, object>();
+            foreach (var kvp in inputControls)
+            {
+                var field = config.Fields.FirstOrDefault(f => f.Key == kvp.Key);
+                if (field == null) continue;
+
+                // 先拿到 UI 上的原始文字
+                string rawValue = "";
+                if (kvp.Value is ComboBox cmb) rawValue = cmb.SelectedItem?.ToString() ?? "";
+                else if (kvp.Value is TextBox txt) rawValue = txt.Text;
+
+                // 🎯 依據資料型態 (Type) 進行精準轉型
+                switch (field.Type.ToLower())
+                {
+                    case "number":
+                        if (int.TryParse(rawValue, out int intVal)) payload.Add(kvp.Key, intVal);
+                        else payload.Add(kvp.Key, 0); // 防呆
+                        break;
+
+                    case "object": // 處理巢狀 JSON
+                        try
+                        {
+                            using (var doc = JsonDocument.Parse(rawValue))
+                            {
+                                payload.Add(kvp.Key, doc.RootElement.Clone());
+                            }
+                        }
+                        catch
+                        {
+                            payload.Add(kvp.Key, new Dictionary<string, string>()); // 格式錯給空物件
+                        }
+                        break;
+
+                    case "boolean":
+                        // 如果以後有布林值欄位也可以直接支援
+                        payload.Add(kvp.Key, rawValue.ToLower() == "true");
+                        break;
+
+                    default: // "string" 或沒設定，一律當作一般字串
+                        payload.Add(kvp.Key, rawValue);
+                        break;
+                }
+            }
+
+            return payload;
         }
 
         private async Task ShowRefresh(ApiConfig config, Button btnRefresh, DataGridView dgv)
@@ -448,14 +454,8 @@ namespace DynamicCRUDApp
                 {
                     btnSave.Enabled = false;
 
-                    var payload = new Dictionary<string, object>();
-                    foreach (var kvp in inputControls)
-                    {
-                        if (kvp.Value is ComboBox cmb)
-                            payload.Add(kvp.Key, cmb.SelectedItem?.ToString() ?? "");
-                        else if (kvp.Value is TextBox txt)
-                            payload.Add(kvp.Key, txt.Text);
-                    }
+                    
+                    Dictionary<string, object> payload = GetPayload(config, inputControls);
 
                     try
                     {
