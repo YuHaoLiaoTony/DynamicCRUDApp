@@ -231,25 +231,7 @@ namespace DynamicCRUDApp
             // 2. 儲存點擊事件
             btnSave.Click += async (ss, ee) =>
             {
-                btnSave.Enabled = false;
-                Dictionary<string, object> payload = GetPayload(config, inputControls);
-
-                try
-                {
-                    if (!config.Apis.ContainsKey("Update"))
-                        throw new Exception("Config 中未設定 Update API 網址！");
-
-                    string jsonBody = JsonSerializer.Serialize(payload);
-                    await SendApiStringAsync(config, "Update", selectedRow, jsonBody);
-
-                    MessageBox.Show("修改成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    editForm.DialogResult = DialogResult.OK;
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"修改失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    btnSave.Enabled = true;
-                }
+                await HandleSubmitAsync(btnSave, config, inputControls, editForm, "Update", selectedRow, "修改成功！");
             };
             return btnSave;
         }
@@ -262,45 +244,74 @@ namespace DynamicCRUDApp
                 var field = config.Fields.FirstOrDefault(f => f.Key == kvp.Key);
                 if (field == null) continue;
 
-                // 先拿到 UI 上的原始文字
+                // 1. 取得 UI 上的文字 (相容 .NET 4.8 寫法)
                 string rawValue = "";
-                if (kvp.Value is ComboBox cmb) rawValue = cmb.SelectedItem?.ToString() ?? "";
-                else if (kvp.Value is TextBox txt) rawValue = txt.Text;
+                if (kvp.Value is ComboBox cmb)
+                {
+                    rawValue = cmb.SelectedItem?.ToString() ?? "";
+                }
+                else if (kvp.Value is TextBox txt)
+                {
+                    rawValue = txt.Text;
+                }
+                else if (kvp.Value is CheckBox chk)
+                {
+                    rawValue = chk.Checked.ToString();
+                }
 
-                // 🎯 依據資料型態 (Type) 進行精準轉型
+                // 2. 依據資料型態轉型 (使用傳統 switch，但把 object 解析抽離，保持乾淨)
+                object typedValue = rawValue; // 預設當字串
                 switch (field.Type.ToLower())
                 {
                     case "number":
-                        if (int.TryParse(rawValue, out int intVal)) payload.Add(kvp.Key, intVal);
-                        else payload.Add(kvp.Key, 0); // 防呆
+                        typedValue = int.TryParse(rawValue, out int intVal) ? intVal : 0;
                         break;
-
-                    case "object": // 處理巢狀 JSON
-                        try
-                        {
-                            using (var doc = JsonDocument.Parse(rawValue))
-                            {
-                                payload.Add(kvp.Key, doc.RootElement.Clone());
-                            }
-                        }
-                        catch
-                        {
-                            payload.Add(kvp.Key, new Dictionary<string, string>()); // 格式錯給空物件
-                        }
-                        break;
-
                     case "boolean":
-                        // 如果以後有布林值欄位也可以直接支援
-                        payload.Add(kvp.Key, rawValue.ToLower() == "true");
+                        typedValue = (rawValue.ToLower() == "true" || rawValue == "1");
                         break;
-
-                    default: // "string" 或沒設定，一律當作一般字串
-                        payload.Add(kvp.Key, rawValue);
+                    case "object":
+                        typedValue = TryParseJson(rawValue);
                         break;
                 }
-            }
 
+                payload.Add(kvp.Key, typedValue);
+            }
             return payload;
+        }
+        // 💡 抽出共用：新增與修改按鈕點擊時的 API 提交邏輯 (100% 相容 .NET 4.8)
+        private async Task HandleSubmitAsync(Button btn, ApiConfig config, Dictionary<string, Control> inputControls, Form currentForm, string action, DataGridViewRow selectedRow, string successMessage)
+        {
+            btn.Enabled = false;
+            try
+            {
+                if (!config.Apis.ContainsKey(action))
+                    throw new Exception($"Config 中未設定 {action} API 網址！");
+
+                var payload = GetPayload(config, inputControls);
+                string jsonBody = JsonSerializer.Serialize(payload);
+
+                await SendApiStringAsync(config, action, selectedRow, jsonBody);
+
+                MessageBox.Show(successMessage, "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                currentForm.DialogResult = DialogResult.OK;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"操作失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                btn.Enabled = true;
+            }
+        }
+        // 💡 獨立抽出來的 JSON 解析小方法，讓主邏輯不凌亂
+        private static object TryParseJson(string json)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<object>(json) ?? new Dictionary<string, string>();
+            }
+            catch
+            {
+                return new Dictionary<string, string>();
+            }
         }
 
         private async Task ShowRefresh(ApiConfig config, Button btnRefresh, DataGridView dgv)
@@ -341,26 +352,7 @@ namespace DynamicCRUDApp
             // 4. 儲存按鈕點擊事件 (保持你原本的邏輯不變)
             btnSave.Click += async (ss, ee) =>
             {
-                btnSave.Enabled = false;
-
-                Dictionary<string, object> payload = GetPayload(config, inputControls);
-
-                try
-                {
-                    if (!config.Apis.ContainsKey("Create"))
-                        throw new Exception("Config 中未設定 Create API 網址！");
-
-                    string jsonBody = JsonSerializer.Serialize(payload);
-                    await SendApiStringAsync(config, "Create", jsonBody: jsonBody);
-
-                    MessageBox.Show("新增成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    addForm.DialogResult = DialogResult.OK;
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"新增失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    btnSave.Enabled = true;
-                }
+                await HandleSubmitAsync(btnSave, config, inputControls, addForm, "Create", null, "新增成功！");
             };
 
             // 5. 彈出視窗並處理成功回呼
