@@ -168,42 +168,34 @@ namespace DynamicCRUDApp
 
         private void ShowEditDialog(ApiConfig config, DataGridViewRow selectedRow, Dictionary<string, string> formData, Action onSuccess)
         {
-            using (Form editForm = new Form())
+            // 🌟 改用共用方法建立視窗外殼
+            var (editForm, flowPanel) = CreateBaseDialog($"修改資料 - {config.Name}");
+
+            // 呼叫你寫好的 GetFormControls (傳入舊資料，並指定是編輯模式)
+            Dictionary<string, Control> inputControls = GetFormControls(flowPanel, config.Fields, formData, true);
+
+            // 以下保持你原本的邏輯，只有把對應的控制項塞進共用的 flowPanel
+            Button btnDelete = GetDeleteBtn(config, selectedRow, editForm, inputControls);
+            Button btnSave = GetSaveBtn(config, selectedRow, editForm, inputControls);
+
+            // 🌟 建立一個跟輸入框一樣寬 (340) 的容器
+            Panel buttonContainer = new Panel
             {
-                editForm.Text = $"修改資料 - {config.Name}";
-                editForm.Size = new Size(width, height);
-                editForm.StartPosition = FormStartPosition.CenterParent;
-                editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
-                editForm.MaximizeBox = false;
-                editForm.MinimizeBox = false;
+                Width = 340,
+                Height = 35,
+                Margin = new Padding(0, 25, 0, 0) // 上方留 25px 空隙，跟上面的輸入框拉開距離
+            };
 
-                FlowLayoutPanel flowPanel = new FlowLayoutPanel
-                {
-                    Dock = DockStyle.Fill,
-                    FlowDirection = FlowDirection.TopDown,
-                    Padding = new Padding(20),
-                    AutoScroll = true
-                };
+            // 把靠左、靠右的兩顆按鈕塞進容器裡
+            buttonContainer.Controls.Add(btnSave);
+            buttonContainer.Controls.Add(btnDelete);
 
-                Dictionary<string, Control> inputControls = GetFormControls(flowPanel, config.Fields, formData, true);
+            // 最後把容器丟進 flowPanel
+            flowPanel.Controls.Add(buttonContainer);
 
-                Button btnDelete = GetDeleteBtn(config, selectedRow, editForm, inputControls);
-                Button btnSave = GetSaveBtn(config, selectedRow, editForm, inputControls);
-                Panel buttonContainer = new Panel
-                {
-                    Width = flowPanel.ClientSize.Width - 10, // 減去一點邊距防置折行
-                    Height = 45
-                };
-                buttonContainer.Controls.Add(btnSave);
-                buttonContainer.Controls.Add(btnDelete);
-                flowPanel.Controls.Add(buttonContainer);
-              
-                editForm.Controls.Add(flowPanel);
-
-                if (editForm.ShowDialog() == DialogResult.OK)
-                {
-                    onSuccess?.Invoke();
-                }
+            if (editForm.ShowDialog() == DialogResult.OK)
+            {
+                onSuccess?.Invoke();
             }
         }
 
@@ -336,63 +328,45 @@ namespace DynamicCRUDApp
 
         private void ShowAddDialog(ApiConfig config, Action onSuccess)
         {
-            using (Form editForm = new Form())
+            // 🌟 改用共用方法建立視窗外殼
+            var (addForm, flowPanel) = CreateBaseDialog($"新增資料 - {config.Name}");
+
+            // 呼叫你寫好的 GetFormControls
+            Dictionary<string, Control> inputControls = GetFormControls(flowPanel, config.Fields);
+
+            // 3. 儲存按鈕
+            Button btnSave = new Button { Text = "儲存提交", Width = 100, Height = 35, Margin = new Padding(0, 25, 0, 0) };
+            flowPanel.Controls.Add(btnSave);
+
+            // 4. 儲存按鈕點擊事件 (保持你原本的邏輯不變)
+            btnSave.Click += async (ss, ee) =>
             {
-                // 1. 初始化視窗基本設定
-                editForm.Text = $"新增資料 - {config.Name}";
-                editForm.Size = new Size(width, height);
-                editForm.StartPosition = FormStartPosition.CenterParent;
-                editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
-                editForm.MaximizeBox = false;
-                editForm.MinimizeBox = false;
+                btnSave.Enabled = false;
 
-                FlowLayoutPanel flowPanel = new FlowLayoutPanel
+                Dictionary<string, object> payload = GetPayload(config, inputControls);
+
+                try
                 {
-                    Dock = DockStyle.Fill,
-                    FlowDirection = FlowDirection.TopDown,
-                    Padding = new Padding(20),
-                    AutoScroll = true
-                };
+                    if (!config.Apis.ContainsKey("Create"))
+                        throw new Exception("Config 中未設定 Create API 網址！");
 
-                Dictionary<string, Control> inputControls = GetFormControls(flowPanel, config.Fields);
+                    string jsonBody = JsonSerializer.Serialize(payload);
+                    await SendApiStringAsync(config, "Create", jsonBody: jsonBody);
 
-                // 3. 儲存按鈕
-                Button btnSave = new Button { Text = "儲存提交", Width = 100, Height = 35, Margin = new Padding(0, 25, 0, 0) };
-                flowPanel.Controls.Add(btnSave);
-
-                // 4. 儲存按鈕點擊事件 (非同步)
-                btnSave.Click += async (ss, ee) =>
-                {
-                    btnSave.Enabled = false;
-
-                    
-                    Dictionary<string, object> payload = GetPayload(config, inputControls);
-
-                    try
-                    {
-                        if (!config.Apis.ContainsKey("Create"))
-                            throw new Exception("Config 中未設定 Create API 網址！");
-
-                        string jsonBody = JsonSerializer.Serialize(payload);
-                        await SendApiStringAsync(config, "Create", jsonBody: jsonBody);
-                   
-                        MessageBox.Show("新增成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        editForm.DialogResult = DialogResult.OK;
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"新增失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        btnSave.Enabled = true;
-                    }
-                };
-
-                editForm.Controls.Add(flowPanel);
-
-                // 5. 彈出視窗並處理成功回呼
-                if (editForm.ShowDialog() == DialogResult.OK)
-                {
-                    onSuccess?.Invoke(); // 觸發傳進來的重新整理動作
+                    MessageBox.Show("新增成功！", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    addForm.DialogResult = DialogResult.OK;
                 }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"新增失敗：\n{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    btnSave.Enabled = true;
+                }
+            };
+
+            // 5. 彈出視窗並處理成功回呼
+            if (addForm.ShowDialog() == DialogResult.OK)
+            {
+                onSuccess?.Invoke();
             }
         }
         /// <summary>
@@ -629,6 +603,30 @@ namespace DynamicCRUDApp
                 string jsonResult = await response.Content.ReadAsStringAsync();
                 return jsonResult;
             }
+        }
+        // 💡 抽出共用：建立新增/修改彈窗的基礎外殼
+        private (Form Form, FlowLayoutPanel Panel) CreateBaseDialog(string title)
+        {
+            Form dialogForm = new Form
+            {
+                Text = title,
+                Size = new Size(width, height), // 使用你原本定義的 width, height
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            FlowLayoutPanel flowPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                Padding = new Padding(20),
+                AutoScroll = true
+            };
+
+            dialogForm.Controls.Add(flowPanel);
+            return (dialogForm, flowPanel);
         }
     }
 }
