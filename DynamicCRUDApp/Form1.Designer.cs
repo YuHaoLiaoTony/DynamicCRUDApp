@@ -206,6 +206,7 @@ namespace DynamicCRUDApp
                 }
             }
         }
+
         private Button GetDeleteBtn(ApiConfig config, DataGridViewRow selectedRow, Form editForm, Dictionary<string, Control> inputControls)
         {
             Button btnDelete = new Button { Text = "刪除", Width = 100, Height = 35, Dock = DockStyle.Right };
@@ -231,6 +232,7 @@ namespace DynamicCRUDApp
             };
             return btnDelete;
         }
+
         private Button GetSaveBtn(ApiConfig config, DataGridViewRow selectedRow, Form editForm, Dictionary<string, Control> inputControls)
         {
             Button btnSave = new Button { Text = "儲存修改", Width = 100, Height = 35, Dock = DockStyle.Left };
