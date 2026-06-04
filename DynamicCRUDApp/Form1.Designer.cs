@@ -211,43 +211,7 @@ namespace DynamicCRUDApp
                     AutoScroll = true
                 };
 
-                Dictionary<string, Control> inputControls = new Dictionary<string, Control>();
-
-                // 1. 動態產生控制項
-                foreach (var field in config.Fields)
-                {
-                    // 🌟 改從傳進來的 formData 字典檔抓數值
-                    string currentValue = formData.ContainsKey(field.Key) ? formData[field.Key] : "";
-
-                    Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
-                    flowPanel.Controls.Add(lbl);
-
-                    Control inputCtrl;
-                    if (field.UiType == "Select" && field.Options != null)
-                    {
-                        var cmb = new ComboBox { Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
-                        cmb.Items.AddRange(field.Options.ToArray());
-                        inputCtrl = cmb;
-                    }
-                    else if (field.UiType == "CheckBox")
-                    {
-                        inputCtrl = new CheckBox { Text = field.Label, Width = 340 };
-                    }
-                    else
-                    {
-                        inputCtrl = new TextBox { Width = 340 };
-                    }
-
-                    // 主鍵或不可編輯的欄位鎖死唯讀
-                    if (field.IsPK || field.Editable == false)
-                    {
-                        inputCtrl.Enabled = false;
-                    }
-                    inputCtrl.Text = currentValue;
-                    flowPanel.Controls.Add(inputCtrl);
-                    inputControls.Add(field.Key, inputCtrl);
-                }
-
+                Dictionary<string, Control> inputControls = GetFormControls(flowPanel, config.Fields, formData, true);
 
                 Button btnDelete = GetDeleteBtn(config, selectedRow, editForm, inputControls);
                 Button btnSave = GetSaveBtn(config, selectedRow, editForm, inputControls);
@@ -414,36 +378,7 @@ namespace DynamicCRUDApp
                     AutoScroll = true
                 };
 
-                Dictionary<string, Control> inputControls = new Dictionary<string, Control>();
-
-                // 2. 動態產生控制項
-                foreach (var field in config.Fields)
-                {
-                    if (field.IsPK || field.Editable == false)
-                        continue;
-
-                    Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
-                    flowPanel.Controls.Add(lbl);
-
-                    Control inputCtrl;
-                    if (field.UiType == "Select" && field.Options != null)
-                    {
-                        var cmb = new ComboBox { Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
-                        cmb.Items.AddRange(field.Options.ToArray());
-                        inputCtrl = cmb;
-                    }
-                    else if (field.UiType == "CheckBox")
-                    {
-                        inputCtrl = new CheckBox { Text = field.Label, Width = 340 };
-                    }
-                    else
-                    {
-                        inputCtrl = new TextBox { Width = 340 };
-                    }
-                    
-                    flowPanel.Controls.Add(inputCtrl);
-                    inputControls.Add(field.Key, inputCtrl);
-                }
+                Dictionary<string, Control> inputControls = GetFormControls(flowPanel, config.Fields);
 
                 // 3. 儲存按鈕
                 Button btnSave = new Button { Text = "儲存提交", Width = 100, Height = 35, Margin = new Padding(0, 25, 0, 0) };
@@ -483,6 +418,90 @@ namespace DynamicCRUDApp
                     onSuccess?.Invoke(); // 觸發傳進來的重新整理動作
                 }
             }
+        }
+        /// <summary>
+        /// 動態產生表單控制項（同時支援新增與修改模式）
+        /// </summary>
+        /// <param name="fields">欄位設定清單</param>
+        /// <param name="formData">既有的資料（修改模式用），新增模式傳 null 即可</param>
+        /// <param name="isEditMode">是否為修改模式（true: 修改, false: 新增）</param>
+        public Dictionary<string, Control> GetFormControls(FlowLayoutPanel flowPanel, IEnumerable<FieldInfo> fields, Dictionary<string, string> formData = default, bool isEditMode = false)
+        {
+            Dictionary<string, Control> inputControls = new Dictionary<string, Control>();
+            flowPanel.Controls.Clear();
+
+            foreach (var field in fields)
+            {
+                // 區分情境：如果是「新增模式」，遇到主鍵或設定為不可編輯的欄位，就直接跳過不顯示 (對應你原本版本2的邏輯)
+                if (!isEditMode && (field.IsPK || field.Editable == false))
+                {
+                    continue;
+                }
+
+                // 1. 取得初始值（只有修改模式才需要抓資料，新增模式一律給空字串）
+                string currentValue = (isEditMode && formData != null && formData.ContainsKey(field.Key))
+                    ? formData[field.Key]
+                    : "";
+
+                // 2. 建立 Label
+                Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
+                flowPanel.Controls.Add(lbl);
+
+                // 3. 根據 UiType 建立對應的控制項
+                Control inputCtrl;
+
+                if (field.UiType == "Select" && field.Options != null)
+                {
+                    var cmb = new ComboBox { Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
+                    cmb.Items.AddRange(field.Options.ToArray());
+                    inputCtrl = cmb;
+                }
+                else if (field.UiType == "CheckBox")
+                {
+                    var chk = new CheckBox { Text = field.Label, Width = 340 };
+                    chk.Checked = (currentValue == "true" || currentValue == "1");
+                    inputCtrl = chk;
+                }
+                else if (field.UiType == "TextArea")
+                {
+                    inputCtrl = new TextBox
+                    {
+                        Width = 340,
+                        Height = 100,
+                        Multiline = true,
+                        ScrollBars = ScrollBars.Vertical,
+                        WordWrap = true
+                    };
+                }
+                else
+                {
+                    inputCtrl = new TextBox { Width = 340 };
+                }
+
+                // 4. 處理「修改模式」下的唯讀狀態 (對應你原本版本1的邏輯)
+                if (isEditMode && (field.IsPK || field.Editable == false))
+                {
+                    if (inputCtrl is TextBox txt)
+                    {
+                        txt.ReadOnly = true; // 用 ReadOnly 替代 Enabled = false，滑鼠還可以選取複製，UX 較佳
+                    }
+                    else
+                    {
+                        inputCtrl.Enabled = false;
+                    }
+                }
+
+                // 5. 填入數值（非 CheckBox 的控制項）
+                if (field.UiType != "CheckBox")
+                {
+                    inputCtrl.Text = currentValue;
+                }
+
+                // 6. 加入畫面與快取字典
+                flowPanel.Controls.Add(inputCtrl);
+                inputControls.Add(field.Key, inputCtrl);
+            }
+            return inputControls;
         }
         private DataTable ConvertJsonToDataTable(string json, List<FieldInfo> fields)
         {
