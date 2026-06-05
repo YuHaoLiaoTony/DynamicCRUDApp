@@ -101,8 +101,6 @@ namespace DynamicCRUDApp
                     DataPropertyName = field.Key,
                 };
 
-                col.Tag = new { IsPK = field.IsPK };
-
                 dgv.Columns.Add(col);
             }
             // 綁定連線事件 (使用上一個步驟寫好的非同步處理)
@@ -120,20 +118,6 @@ namespace DynamicCRUDApp
 
             tabControl.TabPages.Add(tabPage);
         }
-        private PKInfo GetPKInfoFromRow(DataGridViewRow row)
-        {
-            DataGridViewColumn pkCol = row.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
-
-            if (pkCol != null)
-            {
-                return new PKInfo
-                {
-                    Name = pkCol.Name,
-                    Value = row.Cells[pkCol.Name].Value?.ToString() ?? string.Empty
-                };
-            }
-            return null;
-        }
         private DataGridViewCellEventHandler ShowEditDialog(ApiConfig config, Button btnRefresh, DataGridView dgv)
         {
             return async (s, e) =>
@@ -144,19 +128,9 @@ namespace DynamicCRUDApp
 
                 DataGridViewColumn pkCol = selectedRow.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
 
-                PKInfo pk = null;
-                if(pkCol != null)
-                {
-                    pk = new PKInfo
-                    {
-                        Name = pkCol.Name,
-                        Value = selectedRow.Cells[pkCol.Name].Value?.ToString() ?? string.Empty
-                    };
-                }
-
                 // 準備一個 Dictionary 存放最終要丟給編輯視窗的資料
                 Dictionary<string, string> formData = new Dictionary<string, string>();
-                formData[pk.Name] = pk.Value;
+               
                 // 2. 判斷 Config 有沒有設定 Detail API
                 if (!config.Apis.ContainsKey("Detail"))
                 {

@@ -33,7 +33,6 @@ namespace DynamicCRUDApp
         public string Type { get; set; } // String, Number, DateTime
         public string UiType { get; set; } // TextBox, ComboBox, DateTimePicker
         public List<string> Options { get; set; }
-        public bool IsPK { get; set; }
         public bool ShowInList { get; set; }
         public bool Editable { get; set; }
         public bool Required { get; set; }
