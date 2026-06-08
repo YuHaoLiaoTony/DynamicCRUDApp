@@ -132,15 +132,7 @@ namespace DynamicCRUDApp
                 Dictionary<string, string> formData = new Dictionary<string, string>();
                
                 // 2. 判斷 Config 有沒有設定 Detail API
-                if (!config.Apis.ContainsKey("Detail"))
-                {
-                    // 3. 根本沒有設定 Detail API，直接從 DataGridViewRow 撈資料
-                    foreach (var field in config.Fields)
-                    {
-                        formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
-                    }
-                }
-                else
+                if (config.Apis.ContainsKey("Detail"))
                 {
                     try
                     {
@@ -153,11 +145,14 @@ namespace DynamicCRUDApp
                     catch (Exception ex)
                     {
                         MessageBox.Show($"呼叫單筆 API 失敗，將自動轉用列表資料暫代。\n錯誤原因：{ex.Message}", "提示");
-                        // 備援方案：API 萬一掛了，還是從 DataGridView 撈資料頂著用
-                        foreach (var field in config.Fields)
-                        {
-                            formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
-                        }
+                    }
+                }
+
+                if(formData.Count == 0)
+                {
+                    foreach (var field in config.Fields)
+                    {
+                        formData[field.Key] = selectedRow.Cells[field.Key]?.Value?.ToString() ?? "";
                     }
                 }
 
@@ -381,9 +376,11 @@ namespace DynamicCRUDApp
                 }
 
                 // 1. 取得初始值（只有修改模式才需要抓資料，新增模式一律給空字串）
-                string currentValue = (isEditMode && formData != null && formData.ContainsKey(field.Key))
-                    ? formData[field.Key]
-                    : "";
+                string currentValue = "";
+                if (isEditMode && formData != null)
+                {
+                    formData.TryGetValue(field.Key, out currentValue);
+                }
 
                 // 2. 建立 Label
                 Label lbl = new Label { Text = field.Label, Width = 340, Margin = new Padding(0, 8, 0, 2) };
