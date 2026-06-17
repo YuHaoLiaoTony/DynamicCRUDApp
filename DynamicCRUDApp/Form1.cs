@@ -1,5 +1,4 @@
-﻿using DynamicCRUDApp.Properties;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -30,9 +29,5 @@ namespace DynamicCRUDApp
             this.Icon = ((Icon)(resources.GetObject("$this.Icon")));
         }
 
-        private void Form1_Load_1(object sender, EventArgs e)
-        {
-
-        }
     }
 }

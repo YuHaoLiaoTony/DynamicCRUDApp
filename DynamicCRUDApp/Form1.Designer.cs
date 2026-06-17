@@ -17,12 +17,14 @@ namespace DynamicCRUDApp
         private TabControl tabControl;
         private static readonly HttpClient httpClient = new HttpClient();
 
-        int width = 600;
-        int height = 800;
+        private const int DefaultControlWidth = 600;
+        private const int DefaultControlHeight = 800;
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            //InitializeComponent();
+            // 不使用標準 WinForms Designer InitializeComponent()，
+            // 因為本專案所有 UI 控制項皆由程式動態產生（根據 AppConfig.json），
+            // 無需透過設計工具初始化，避免重複初始化或衝突。
             // 確保設定檔存在 (如果沒有，就自動產生一份 Demo 用的)
             if (!File.Exists("AppConfig.json"))
             {
@@ -99,6 +101,7 @@ namespace DynamicCRUDApp
                     Name = field.Key,
                     HeaderText = field.Label,
                     DataPropertyName = field.Key,
+                    Tag = field,
                 };
 
                 dgv.Columns.Add(col);
@@ -125,8 +128,6 @@ namespace DynamicCRUDApp
                 if (e.RowIndex < 0) 
                     return;
                 DataGridViewRow selectedRow = dgv.Rows[e.RowIndex];
-
-                DataGridViewColumn pkCol = selectedRow.DataGridView.Columns.Cast<DataGridViewColumn>().Where(f => ((dynamic)f.Tag)?.IsPK == true).FirstOrDefault();
 
                 // 準備一個 Dictionary 存放最終要丟給編輯視窗的資料
                 Dictionary<string, string> formData = new Dictionary<string, string>();
@@ -599,7 +600,7 @@ namespace DynamicCRUDApp
             Form dialogForm = new Form
             {
                 Text = title,
-                Size = new Size(width, height), // 使用你原本定義的 width, height
+                Size = new Size(DefaultControlWidth, DefaultControlHeight),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,

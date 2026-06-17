@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace DynamicCRUDApp
 {
@@ -36,5 +34,6 @@ namespace DynamicCRUDApp
         public bool ShowInList { get; set; }
         public bool Editable { get; set; }
         public bool Required { get; set; }
+        public bool IsPK { get; set; }
     }
 }
